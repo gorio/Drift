@@ -21,6 +21,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontMetrics>
 #include <QImageReader>
@@ -953,12 +954,27 @@ bool FrameCompositor::prepare(drift::TimeUs timelineUs, const RenderOptions &opt
     QSet<QString> audioPaths;
     collectActivePaths(m_project, timelineUs, videoPaths, audioPaths);
     ClipReaderPool::instance().retainActivePaths(videoPaths, audioPaths);
-    ClipReaderPool::instance().setReadAheadUs(options.readAheadUs);
 
-    // Start every clip's decode before compositing anything, so they run in
-    // parallel across the per-path worker threads rather than serially below.
-    ClipReaderPool::instance().warmVideoFrames(
-        collectVideoRequests(m_project, timelineUs, width, height));
+    // Diagnostic switch:
+    //
+    // DRIFT_DISABLE_PREVIEW_PREFETCH=1
+    //
+    // disables both warm-frame scheduling and continuous read-ahead without
+    // changing the normal behaviour of production builds. This lets us prove
+    // whether queued prefetch work is blocking realtime frame requests on the
+    // same ClipReaderWorker.
+    const bool disablePreviewPrefetch =
+        qEnvironmentVariableIntValue("DRIFT_DISABLE_PREVIEW_PREFETCH") != 0;
+
+    ClipReaderPool::instance().setReadAheadUs(
+        disablePreviewPrefetch ? 0 : options.readAheadUs);
+
+    if (!disablePreviewPrefetch) {
+        // Start every clip's decode before compositing anything, so they run in
+        // parallel across the per-path worker threads rather than serially below.
+        ClipReaderPool::instance().warmVideoFrames(
+            collectVideoRequests(m_project, timelineUs, width, height));
+    }
 
     *widthOut = width;
     *heightOut = height;
@@ -986,14 +1002,107 @@ GpuFrameTexture FrameCompositor::compositeToTextureAt(drift::TimeUs timelineUs,
     if (!GpuCompositor::isAvailable())
         return {};
 
+    static QElapsedTimer reportWindow;
+    static qint64 prepareTotalUs = 0;
+    static qint64 prepareMaxUs = 0;
+    static qint64 gpuTotalUs = 0;
+    static qint64 gpuMaxUs = 0;
+    static qint64 totalTotalUs = 0;
+    static qint64 totalMaxUs = 0;
+    static int frameCount = 0;
+
+    if (!reportWindow.isValid())
+        reportWindow.start();
+
+    QElapsedTimer totalTimer;
+    totalTimer.start();
+
     GpuScene scene;
     int width = 0;
     int height = 0;
     double renderScale = 1.0;
+
+    QElapsedTimer stageTimer;
+    stageTimer.start();
+
     if (!prepare(timelineUs, options, &scene, &width, &height, &renderScale))
         return {};
 
-    return GpuCompositor::renderToTexture(scene);
+    const qint64 prepareUs = stageTimer.nsecsElapsed() / 1000;
+
+    stageTimer.restart();
+
+    GpuFrameTexture result =
+        GpuCompositor::renderToTexture(scene);
+
+    const qint64 gpuUs = stageTimer.nsecsElapsed() / 1000;
+    const qint64 totalUs = totalTimer.nsecsElapsed() / 1000;
+
+    ++frameCount;
+
+    prepareTotalUs += prepareUs;
+    prepareMaxUs = qMax(prepareMaxUs, prepareUs);
+
+    gpuTotalUs += gpuUs;
+    gpuMaxUs = qMax(gpuMaxUs, gpuUs);
+
+    totalTotalUs += totalUs;
+    totalMaxUs = qMax(totalMaxUs, totalUs);
+
+    if (reportWindow.elapsed() >= 1000) {
+        const double prepareAvgMs =
+            frameCount > 0
+                ? prepareTotalUs / 1000.0 / frameCount
+                : 0.0;
+
+        const double gpuAvgMs =
+            frameCount > 0
+                ? gpuTotalUs / 1000.0 / frameCount
+                : 0.0;
+
+        const double totalAvgMs =
+            frameCount > 0
+                ? totalTotalUs / 1000.0 / frameCount
+                : 0.0;
+
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[FRAME-STAGES] "
+                   "frames=%1 "
+                   "prepareAvg=%2ms "
+                   "prepareMax=%3ms "
+                   "gpuAvg=%4ms "
+                   "gpuMax=%5ms "
+                   "totalAvg=%6ms "
+                   "totalMax=%7ms "
+                   "canvas=%8x%9 "
+                   "renderScale=%10")
+                   .arg(frameCount)
+                   .arg(prepareAvgMs, 0, 'f', 2)
+                   .arg(prepareMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(gpuAvgMs, 0, 'f', 2)
+                   .arg(gpuMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(totalAvgMs, 0, 'f', 2)
+                   .arg(totalMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(width)
+                   .arg(height)
+                   .arg(renderScale, 0, 'f', 2);
+
+        prepareTotalUs = 0;
+        prepareMaxUs = 0;
+
+        gpuTotalUs = 0;
+        gpuMaxUs = 0;
+
+        totalTotalUs = 0;
+        totalMaxUs = 0;
+
+        frameCount = 0;
+
+        reportWindow.restart();
+    }
+
+    return result;
 }
 
 bool FrameCompositor::buildSceneAt(drift::TimeUs timelineUs, const RenderOptions &options,

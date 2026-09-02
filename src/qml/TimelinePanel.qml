@@ -568,7 +568,7 @@ PanelFrame {
     }
 
     function handleTimelineWheel(wheel) {
-        if (wheel.modifiers & Qt.ControlModifier) {
+        if (Theme.primaryModifierPressed(wheel.modifiers)) {
             // Wheel MouseAreas live in content space, so wheel.x is already a
             // content X — keep that time fixed under the cursor.
             const anchorSeconds = Math.max(0, wheel.x / pxPerSecond)

@@ -24,9 +24,14 @@ constexpr int kOnTimeBeforeScaleUp = 6;
 // slower than the ones after them. Charging those to the adaptive scale used to
 // downscale the first seconds of every playback.
 constexpr int kWarmupFrames = 3;
-// Floor for the caller's budget: at 60 fps two ticks is 33 ms, close enough to
-// normal jitter that the scale would rattle up and down against it.
-constexpr int kMinLateFrameBudgetMs = 40;
+// Minimum useful realtime deadline.
+//
+// The old 40 ms floor prevented Auto quality from targeting 30/60 fps:
+// a 30 fps frame has only ~33 ms and a 60 fps frame ~16 ms.
+//
+// Keep only a small safety floor for pathological timer values. The caller
+// supplies the actual project-frame interval.
+constexpr int kMinLateFrameBudgetMs = 8;
 }
 
 CompositorWorker::CompositorWorker(QObject *parent)
@@ -62,6 +67,7 @@ CompositorService::CompositorService(QObject *parent)
     connect(m_worker, &CompositorWorker::frameReady, this, &CompositorService::onWorkerFrameReady,
             Qt::QueuedConnection);
     m_thread.start();
+    m_debugWindow.start();
 }
 
 CompositorService::~CompositorService()
@@ -221,6 +227,10 @@ void CompositorService::requestComposite(drift::TimeUs timeUs, FrameCompositor::
 void CompositorService::onWorkerFrameReady(const GpuFrameTexture &frame, drift::TimeUs timeUs)
 {
     const qint64 renderMs = m_renderElapsed.isValid() ? m_renderElapsed.elapsed() : 0;
+
+    ++m_debugCompletedFrames;
+    m_debugRenderTotalMs += renderMs;
+    m_debugRenderMaxMs = qMax(m_debugRenderMaxMs, renderMs);
     const drift::TimeUs latest = m_pendingTimeUs.load(std::memory_order_acquire);
     FrameCompositor::RenderOptions latestOptions;
     latestOptions.previewScale =
@@ -238,8 +248,60 @@ void CompositorService::onWorkerFrameReady(const GpuFrameTexture &frame, drift::
     // only about frames with a deadline: a paused or scrubbed frame is never late.
     if (m_adaptiveQuality && m_dropLateFrames && m_playbackActive)
         noteFrameLate(renderMs > m_lateFrameBudgetMs);
-    if (!stale && frame.isValid())
-        emit frameReady(frame);
+    if (!stale && frame.isValid()) {
+        ++m_debugPresentedFrames;
+        emit frameReady(frame, timeUs);
+    } else if (stale) {
+        ++m_debugDroppedFrames;
+    }
+
+    if (m_debugWindow.isValid() && m_debugWindow.elapsed() >= 1000) {
+        const double seconds = m_debugWindow.elapsed() / 1000.0;
+
+        const double presentedFps =
+            seconds > 0.0 ? m_debugPresentedFrames / seconds : 0.0;
+
+        const double completedFps =
+            seconds > 0.0 ? m_debugCompletedFrames / seconds : 0.0;
+
+        const double avgRenderMs =
+            m_debugCompletedFrames > 0
+                ? static_cast<double>(m_debugRenderTotalMs)
+                    / m_debugCompletedFrames
+                : 0.0;
+
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[PREVIEW-PERF] "
+                   "presented=%1fps "
+                   "completed=%2fps "
+                   "avgRender=%3ms "
+                   "maxRender=%4ms "
+                   "dropped=%5 "
+                   "budget=%6ms "
+                   "scale=%7%% "
+                   "adaptive=%8 "
+                   "pending=%9")
+                   .arg(presentedFps, 0, 'f', 1)
+                   .arg(completedFps, 0, 'f', 1)
+                   .arg(avgRenderMs, 0, 'f', 1)
+                   .arg(m_debugRenderMaxMs)
+                   .arg(m_debugDroppedFrames)
+                   .arg(m_lateFrameBudgetMs)
+                   .arg(static_cast<int>(m_adaptiveScale * 100.0))
+                   .arg(m_adaptiveQuality ? QStringLiteral("yes")
+                                         : QStringLiteral("no"))
+                   .arg(m_requestPending.load(std::memory_order_acquire)
+                            ? QStringLiteral("yes")
+                            : QStringLiteral("no"));
+
+        m_debugWindow.restart();
+        m_debugRenderTotalMs = 0;
+        m_debugRenderMaxMs = 0;
+        m_debugCompletedFrames = 0;
+        m_debugPresentedFrames = 0;
+        m_debugDroppedFrames = 0;
+    }
 
     m_requestPending.store(false, std::memory_order_release);
 

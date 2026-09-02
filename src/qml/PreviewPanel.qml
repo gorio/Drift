@@ -140,7 +140,7 @@ PanelFrame {
                     // propagating: a MouseArea accepts wheel events even with
                     // no onWheel bound.
                     onWheel: (wheel) => {
-                        if (!(wheel.modifiers & Qt.ControlModifier)
+                        if (!Theme.primaryModifierPressed(wheel.modifiers)
                                 || wheel.angleDelta.y === 0) {
                             wheel.accepted = false
                             return

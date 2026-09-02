@@ -456,7 +456,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate audio from video</source>
+        <source>Show audio on separate track</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -1353,10 +1353,6 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Unlink audio</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1959,6 +1955,10 @@
     </message>
     <message>
         <source>Media edited</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Show audio on separate track</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -7950,11 +7950,11 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate audio</source>
+        <source>Show audio on separate track</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate all audio tracks</source>
+        <source>Show all audio tracks separately</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -8120,6 +8120,10 @@ If playback stutters, try another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Trim start — click a clip to drop everything left of the cut</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8169,10 +8173,6 @@ If playback stutters, try another.</source>
     </message>
     <message>
         <source>Clear work area</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Separate audio from video</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

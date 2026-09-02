@@ -457,8 +457,8 @@
         <translation>Geler l&apos;image à l&apos;instant actuel</translation>
     </message>
     <message>
-        <source>Separate audio from video</source>
-        <translation>Séparer l’audio de la vidéo</translation>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Delete</source>
@@ -1355,10 +1355,6 @@
         <translation>Fusionner les clips adjacents</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Séparer l&apos;audio</translation>
-    </message>
-    <message>
         <source>Unlink audio</source>
         <translation>Dissocier l&apos;audio</translation>
     </message>
@@ -1966,6 +1962,10 @@
     <message>
         <source>Media edited</source>
         <translation>Média modifié</translation>
+    </message>
+    <message>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Building keyframes…</source>
@@ -7966,11 +7966,11 @@ En cas de saccades à la lecture, essayez un autre mode.</translation>
         <translation>Diviser l&apos;élément au temps actuel</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Séparer l&apos;audio</translation>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate all audio tracks</source>
+        <source>Show all audio tracks separately</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -8132,6 +8132,10 @@ En cas de saccades à la lecture, essayez un autre mode.</translation>
         <translation>Diviser — cliquez sur un clip pour le diviser</translation>
     </message>
     <message>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Trim start — click a clip to drop everything left of the cut</source>
         <translation>Raccourcir début — cliquez sur un clip pour supprimer tout à gauche de la coupe</translation>
     </message>
@@ -8182,10 +8186,6 @@ En cas de saccades à la lecture, essayez un autre mode.</translation>
     <message>
         <source>Clear work area</source>
         <translation>Effacer la zone de travail</translation>
-    </message>
-    <message>
-        <source>Separate audio from video</source>
-        <translation>Séparer l’audio de la vidéo</translation>
     </message>
     <message>
         <source>Unlink video and audio</source>

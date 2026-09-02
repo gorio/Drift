@@ -74,8 +74,19 @@ public:
     // quality is on (1.0 = full requested quality).
     double adaptiveScaleFactor() const;
 
+    // Used by realtime transport priming. compositeFinished is emitted after
+    // any catch-up request has already been dispatched, so this tells the
+    // caller whether another composite is still in flight.
+    bool isBusy() const
+    {
+        return m_requestPending.load(std::memory_order_acquire);
+    }
+
 signals:
-    void frameReady(const GpuFrameTexture &frame);
+    // Carries the exact timeline timestamp represented by the GPU texture.
+    // PlaybackEngine uses it to keep one frame ready ahead of presentation
+    // without displaying future video before the audio-master clock reaches it.
+    void frameReady(const GpuFrameTexture &frame, drift::TimeUs timeUs);
     // One per completed request, whether or not a frame was produced or shown.
     void compositeFinished();
 
@@ -109,6 +120,16 @@ private:
     // microseconds: at 4x that is four times larger for the same real delay, so
     // fast rates were judged late no matter how quickly frames actually rendered.
     QElapsedTimer m_renderElapsed;
+
+    // Preview performance diagnostics. These counters are intentionally
+    // aggregated and printed roughly once per second so diagnostic logging
+    // does not itself disturb realtime playback.
+    QElapsedTimer m_debugWindow;
+    qint64 m_debugRenderTotalMs = 0;
+    qint64 m_debugRenderMaxMs = 0;
+    int m_debugCompletedFrames = 0;
+    int m_debugPresentedFrames = 0;
+    int m_debugDroppedFrames = 0;
 
     // Adaptive quality: consecutive on-time frames recover; late frames drop scale.
     int m_lateStreak = 0;

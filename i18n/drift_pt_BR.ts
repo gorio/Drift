@@ -456,8 +456,8 @@
         <translation>Congelar quadro no tempo atual</translation>
     </message>
     <message>
-        <source>Separate audio from video</source>
-        <translation>Separar áudio do vídeo</translation>
+        <source>Show audio on separate track</source>
+        <translation>Exibir áudio em faixa separada</translation>
     </message>
     <message>
         <source>Delete</source>
@@ -1353,10 +1353,6 @@
         <translation>Mesclar clipes adjacentes</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Separar áudio</translation>
-    </message>
-    <message>
         <source>Unlink audio</source>
         <translation>Desvincular áudio</translation>
     </message>
@@ -1960,6 +1956,10 @@
     <message>
         <source>Media edited</source>
         <translation>Mídia editada</translation>
+    </message>
+    <message>
+        <source>Show audio on separate track</source>
+        <translation>Exibir áudio em faixa separada</translation>
     </message>
     <message>
         <source>Building keyframes…</source>
@@ -7957,12 +7957,12 @@ Se a reprodução travar, experimente outro.</translation>
         <translation>Dividir no tempo atual</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Separar áudio</translation>
+        <source>Show audio on separate track</source>
+        <translation>Exibir áudio em faixa separada</translation>
     </message>
     <message>
-        <source>Separate all audio tracks</source>
-        <translation type="unfinished"></translation>
+        <source>Show all audio tracks separately</source>
+        <translation>Exibir todas as faixas de áudio separadamente</translation>
     </message>
     <message>
         <source>Unlink</source>
@@ -8127,6 +8127,10 @@ Se a reprodução travar, experimente outro.</translation>
         <translation>Modo de corte — clique em um clipe para dividi-lo</translation>
     </message>
     <message>
+        <source>Show audio on separate track</source>
+        <translation>Exibir áudio em faixa separada</translation>
+    </message>
+    <message>
         <source>Trim start — click a clip to drop everything left of the cut</source>
         <translation>Aparar início — clique em um clipe para descartar tudo à esquerda do corte</translation>
     </message>
@@ -8177,10 +8181,6 @@ Se a reprodução travar, experimente outro.</translation>
     <message>
         <source>Clear work area</source>
         <translation>Limpar área de trabalho</translation>
-    </message>
-    <message>
-        <source>Separate audio from video</source>
-        <translation>Separar áudio do vídeo</translation>
     </message>
     <message>
         <source>Unlink video and audio</source>

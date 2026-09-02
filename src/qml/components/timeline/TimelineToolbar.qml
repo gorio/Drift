@@ -20,7 +20,7 @@ Item {
     // anything on this toolbar was undiscoverable. Rebound keys follow automatically
     // because shortcutFor reads the live map.
     function withShortcut(label, actionId) {
-        const key = EditorState.shortcutFor(actionId)
+        const key = Theme.shortcutDisplay(EditorState.shortcutFor(actionId))
         return key.length > 0 ? qsTr("%1 (%2)").arg(label).arg(key) : label
     }
 
@@ -407,7 +407,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
 
             ThemedToolTip {
-                text: qsTr("Zoom level — click to reset to 1×. Ctrl+wheel over the timeline also zooms.")
+                text: Theme.platformShortcutText(qsTr("Zoom level — click to reset to 1×. Ctrl+wheel over the timeline also zooms."))
                 visible: zoomLabelMouse.containsMouse
             }
 

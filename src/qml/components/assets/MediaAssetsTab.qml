@@ -468,7 +468,7 @@ Item {
                         const mods = leftTap.point.modifiers
                         if ((mods & Qt.ShiftModifier) !== 0) {
                             root.selectAssetRange(root.selectionAnchorId || cardRoot.assetId, cardRoot.assetId)
-                        } else if ((mods & Qt.ControlModifier) !== 0) {
+                        } else if (Theme.primaryModifierPressed(mods)) {
                             root.toggleAssetSelection(cardRoot.assetId)
                             root.selectionAnchorId = cardRoot.assetId
                         } else {
@@ -798,7 +798,7 @@ Item {
                         const mods = leftRowTap.point.modifiers
                         if ((mods & Qt.ShiftModifier) !== 0) {
                             root.selectAssetRange(root.selectionAnchorId || listRow.assetId, listRow.assetId)
-                        } else if ((mods & Qt.ControlModifier) !== 0) {
+                        } else if (Theme.primaryModifierPressed(mods)) {
                             root.toggleAssetSelection(listRow.assetId)
                             root.selectionAnchorId = listRow.assetId
                         } else {

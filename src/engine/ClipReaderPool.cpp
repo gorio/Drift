@@ -1,4 +1,6 @@
 #include "ClipReaderPool.h"
+#include <QElapsedTimer>
+#include <QDebug>
 
 #include "ClipReaderWorker.h"
 
@@ -193,6 +195,10 @@ PreviewVideoFrame ClipReaderPool::readPreviewVideoFrame(const QString &path, qui
     ClipReaderWorker *worker = entry->worker;
 
     PreviewVideoFrame frame;
+
+    QElapsedTimer poolTimer;
+    poolTimer.start();
+
     QMetaObject::invokeMethod(worker, "decodePreviewVideo", Qt::BlockingQueuedConnection,
                                Q_RETURN_ARG(PreviewVideoFrame, frame), Q_ARG(quint64, streamId),
                                Q_ARG(drift::TimeUs, sourceUs), Q_ARG(int, maxWidth),
@@ -200,8 +206,36 @@ PreviewVideoFrame ClipReaderPool::readPreviewVideoFrame(const QString &path, qui
                                Q_ARG(QString, stabilizePath), Q_ARG(int, stabilizeSmoothing),
                                Q_ARG(bool, stabilizeTripod));
 
-    worker->requestPrefetchPreview(streamId, maxWidth, maxHeight,
-                                   m_readAheadUs.load(std::memory_order_relaxed));
+    const qint64 poolUs = poolTimer.nsecsElapsed() / 1000;
+
+    if (poolUs >= 15000) {
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[POOL-WAIT] "
+                   "stream=%1 "
+                   "source=%2ms "
+                   "wait=%3ms "
+                   "target=%4x%5")
+                   .arg(streamId)
+                   .arg(sourceUs / 1000.0, 0, 'f', 1)
+                   .arg(poolUs / 1000.0, 0, 'f', 2)
+                   .arg(maxWidth)
+                   .arg(maxHeight);
+    }
+
+    const drift::TimeUs readAheadUs =
+        m_readAheadUs.load(std::memory_order_relaxed);
+
+    // Do not even enqueue a prefetch request when read-ahead is disabled.
+    // Besides avoiding useless work, this guarantees that the realtime
+    // ClipReader cursor cannot be moved by a "disabled" prefetch.
+    if (readAheadUs > 0) {
+        worker->requestPrefetchPreview(
+            streamId,
+            maxWidth,
+            maxHeight,
+            readAheadUs);
+    }
 
     QMutexLocker lock(&m_mutex);
     --entry->inFlight;

@@ -1,4 +1,6 @@
 #include "ClipReaderWorker.h"
+#include <QElapsedTimer>
+#include <QDebug>
 
 ClipReaderWorker::ClipReaderWorker(QObject *parent)
     : QObject(parent)
@@ -69,14 +71,65 @@ PreviewVideoFrame ClipReaderWorker::decodePreviewVideo(quint64 streamId, drift::
                                                        const QString &stabilizePath,
                                                        int stabilizeSmoothing, bool stabilizeTripod)
 {
+    QElapsedTimer workerTimer;
+    workerTimer.start();
+
     QMutexLocker lock(&m_mutex);
+
+    const qint64 lockUs = workerTimer.nsecsElapsed() / 1000;
+
     ClipReader *reader = readerFor(streamId);
+
+    const qint64 readerReadyUs =
+        workerTimer.nsecsElapsed() / 1000;
+
     if (reader)
-        reader->setStabilizeParams(stabilizePath, stabilizeSmoothing, stabilizeTripod);
+        reader->setStabilizeParams(
+            stabilizePath,
+            stabilizeSmoothing,
+            stabilizeTripod);
+
     PreviewVideoFrame frame;
-    if (!reader || !reader->readPreviewVideoFrame(sourceUs, frame, maxWidth, maxHeight))
-        return {};
-    return frame;
+
+    QElapsedTimer decodeTimer;
+    decodeTimer.start();
+
+    const bool ok =
+        reader
+        && reader->readPreviewVideoFrame(
+            sourceUs,
+            frame,
+            maxWidth,
+            maxHeight);
+
+    const qint64 decodeUs =
+        decodeTimer.nsecsElapsed() / 1000;
+
+    const qint64 totalUs =
+        workerTimer.nsecsElapsed() / 1000;
+
+    if (totalUs >= 15000) {
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[WORKER-DECODE] "
+                   "stream=%1 "
+                   "source=%2ms "
+                   "lock=%3ms "
+                   "readerSetup=%4ms "
+                   "decode=%5ms "
+                   "total=%6ms "
+                   "ok=%7")
+                   .arg(streamId)
+                   .arg(sourceUs / 1000.0, 0, 'f', 1)
+                   .arg(lockUs / 1000.0, 0, 'f', 2)
+                   .arg((readerReadyUs - lockUs) / 1000.0, 0, 'f', 2)
+                   .arg(decodeUs / 1000.0, 0, 'f', 2)
+                   .arg(totalUs / 1000.0, 0, 'f', 2)
+                   .arg(ok ? QStringLiteral("yes")
+                           : QStringLiteral("no"));
+    }
+
+    return ok ? frame : PreviewVideoFrame{};
 }
 
 int ClipReaderWorker::decodeAudio(quint64 streamId, drift::TimeUs sourceStartUs, int sampleCount,

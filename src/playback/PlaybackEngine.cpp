@@ -5,6 +5,8 @@
 #include "engine/HwAccel.h"
 
 #include <QSettings>
+#include <QEventLoop>
+#include <QTimer>
 #include <QVariantMap>
 
 #ifdef Q_OS_ANDROID
@@ -66,7 +68,9 @@ inline void requestAudioFocus() {}
 inline void abandonAudioFocus() {}
 #endif
 
-constexpr int kPlayheadUpdateMs = 16; // ~60 Hz UI updates, independent of video decode
+// Transport/UI clock. Keep this close to a 60 Hz display cadence regardless
+// of the source video frame rate.
+constexpr int kPlayheadUpdateMs = 16;
 
 // How much decoded source each clip's reader keeps buffered ahead of the
 // playhead during fast playback. This absorbs frames that decode slower than
@@ -74,7 +78,14 @@ constexpr int kPlayheadUpdateMs = 16; // ~60 Hz UI updates, independent of video
 // of them. It is deliberately seconds and not minutes: the frames are held in
 // RAM per clip — 2 s of 720p NV12 is ~83 MB — and every edit or seek discards
 // the part of the buffer past the change.
-constexpr drift::TimeUs kReadAheadUs = 2 * drift::kUsPerSecond;
+// Legacy preview read-ahead is intentionally disabled.
+//
+// The old implementation advanced the same realtime decode cursor used by
+// presentation. A future-frame decode could therefore force the realtime
+// request to seek backwards and decode again from a keyframe.
+//
+// A new independent realtime frame queue will replace this mechanism.
+constexpr drift::TimeUs kReadAheadUs = 0;
 
 // The rates the preview transport offers. All sit inside the stretcher's own clamp
 // (kMinCurveSpeed..kMaxCurveSpeed), and nothing outside this list is accepted.
@@ -233,6 +244,10 @@ void PlaybackEngine::onAudioSampleRateChanged()
 
 void PlaybackEngine::setProject(drift::Project *project)
 {
+    m_bufferedFrame = {};
+    m_bufferedFrameTimeUs = -1;
+    m_currentFrameTimeUs = -1;
+
     m_project = project;
     m_mixer.setProject(project);
     m_compositor.setProject(project);
@@ -241,6 +256,10 @@ void PlaybackEngine::setProject(drift::Project *project)
 
 void PlaybackEngine::setPlayheadUs(drift::TimeUs us)
 {
+    // Any queued future texture belongs to the old timeline position.
+    m_bufferedFrame = {};
+    m_bufferedFrameTimeUs = -1;
+
     m_playheadUs = qMax<drift::TimeUs>(0, us);
     // Only real seeks reach here — the playhead tick emits its position directly rather than
     // routing back through this setter. That matters: the mixer's per-clip DSP is streaming, and a
@@ -456,6 +475,48 @@ void PlaybackEngine::play()
     m_audioStreamGeneration.fetch_add(1, std::memory_order_release);
     m_clock.setRate(m_playbackRate);
     m_clock.reset(m_playheadUs, m_sampleRate);
+
+    // Realtime playback must not start its wall/audio clock while the first
+    // decoder open / seek / VideoToolbox surface creation is still happening.
+    //
+    // Prime the exact playhead frame first. The user may wait a few
+    // milliseconds after pressing Play on a cold decoder, but once playback
+    // starts the first video frame is already available and audio/video begin
+    // together.
+    if (!isQualityMode() && m_project) {
+        m_compositor.invalidateSnapshot();
+        m_compositor.requestComposite(
+            m_playheadUs,
+            playbackRenderOptions());
+
+        if (m_compositor.isBusy()) {
+            QEventLoop primeLoop;
+
+            const QMetaObject::Connection primeConnection =
+                connect(
+                    &m_compositor,
+                    &CompositorService::compositeFinished,
+                    &primeLoop,
+                    [&]() {
+                        // A completed composite may immediately dispatch the
+                        // latest catch-up request. Only leave once the
+                        // compositor is actually idle.
+                        if (!m_compositor.isBusy())
+                            primeLoop.quit();
+                    });
+
+            // Never allow a broken media file / driver to lock the UI forever.
+            QTimer::singleShot(
+                750,
+                &primeLoop,
+                &QEventLoop::quit);
+
+            primeLoop.exec();
+
+            disconnect(primeConnection);
+        }
+    }
+
     m_playing = true;
     m_compositor.setPlaybackActive(true);
     // Android dims and locks on its own idle timer, which would be wrong mid-playback even
@@ -488,6 +549,21 @@ void PlaybackEngine::play()
     m_playheadTimer.start(kPlayheadUpdateMs);
     syncDisplayCadence();
 
+    qWarning().noquote()
+        << QStringLiteral(
+               "[PREVIEW-CONFIG] "
+               "quality=%1 "
+               "mode=%2 "
+               "decode=%3 "
+               "rate=%4x "
+               "render=%5x%6")
+               .arg(m_previewQuality)
+               .arg(m_playbackMode)
+               .arg(m_decodeMode)
+               .arg(m_playbackRate, 0, 'f', 2)
+               .arg(m_previewRenderWidth)
+               .arg(m_previewRenderHeight);
+
     onPlayheadTick();
     onCompositeTick();
 }
@@ -497,7 +573,16 @@ void PlaybackEngine::syncDisplayCadence()
     if (!m_playing || isQualityMode())
         return;
 
-    const int fps = m_project ? qMax(1, m_project->fps()) : 30;
+    constexpr int kMaxRealtimePreviewFps = 60;
+
+    const int projectFps =
+        m_project ? qMax(1, m_project->fps()) : 30;
+
+    // Native realtime preview supports project frame rates up to 60 fps.
+    // Lower-rate projects remain native-rate; displaying a 30 fps source
+    // at 60 Hz without interpolation would merely show each frame twice.
+    const int fps =
+        qBound(1, projectFps, kMaxRealtimePreviewFps);
     // This is a display cadence, not a timeline one: a wall second should show about fps frames
     // whatever the rate, and above 1x that simply means covering more timeline per frame. Below 1x
     // the same interval would re-request the frame already on screen several times over, so the
@@ -505,10 +590,16 @@ void PlaybackEngine::syncDisplayCadence()
     const double frameMs = drift::usToSeconds(drift::frameDurationUs(fps)) * 1000.0;
     const int tickMs = qMax(1, static_cast<int>(frameMs * qMax(1.0, 1.0 / m_playbackRate)));
     m_compositeTimer.start(tickMs);
-    // Auto quality reacts to composites that overrun two display ticks. Deriving
-    // the budget from the tick keeps it tied to the real cadence at this fps and
-    // rate, instead of a fixed figure that only ever suited 30 fps at 1x.
-    m_compositor.setLateFrameBudgetMs(tickMs * 2);
+    // Realtime preview must complete each composite inside one display tick.
+    //
+    // Previously Auto tolerated two entire ticks before considering a frame
+    // late. At 30 fps that meant accepting ~66 ms frames (~15 fps) before
+    // adaptive quality reacted, which made playback visibly choppy.
+    //
+    // Auto now prioritizes cadence over preview resolution: when a composite
+    // cannot fit inside the project's frame interval, adaptive quality is
+    // allowed to reduce the render scale until realtime playback is restored.
+    m_compositor.setLateFrameBudgetMs(tickMs);
 }
 
 void PlaybackEngine::pause()
@@ -517,6 +608,11 @@ void PlaybackEngine::pause()
         return;
 
     m_playing = false;
+
+    // Do not retain a future presentation texture while paused.
+    m_bufferedFrame = {};
+    m_bufferedFrameTimeUs = -1;
+
     m_compositor.setPlaybackActive(false);
     drift::android::releaseKeepScreenOn();
     abandonAudioFocus();
@@ -594,6 +690,11 @@ void PlaybackEngine::onPlayheadTick()
         return;
 
     m_playheadUs = timeUs;
+
+    // Presentation is driven by the audio-master playhead, independently of
+    // when the decoder happened to finish the future frame.
+    presentBufferedFrame();
+
     emit playheadUsChanged(static_cast<quint64>(timeUs));
     checkEndOfTimeline(timeUs);
 }
@@ -603,7 +704,44 @@ void PlaybackEngine::onCompositeTick()
     if (!m_playing || !m_project)
         return;
 
-    m_compositor.requestComposite(m_clock.currentTimeUs(), playbackRenderOptions());
+    const drift::TimeUs nowUs =
+        m_clock.currentTimeUs();
+
+    const drift::TimeUs frameUs =
+        qMax<drift::TimeUs>(
+            1,
+            frameStepUs());
+
+    // Keep one DISPLAY frame in reserve. At 1x this is one project frame.
+    // Above 1x the display samples are farther apart in timeline time.
+    const drift::TimeUs leadUs =
+        static_cast<drift::TimeUs>(
+            static_cast<double>(frameUs)
+            * qMax(1.0, m_playbackRate));
+
+    drift::TimeUs requestUs =
+        nowUs + leadUs;
+
+    // Do not pre-render through the end of a loop. The loop seek clears the
+    // presentation reserve and the next tick primes the new beginning instead.
+    drift::TimeUs loopInUs = 0;
+    drift::TimeUs loopOutUs = 0;
+
+    if (shouldLoopWorkArea(
+            &loopInUs,
+            &loopOutUs)
+        && requestUs >= loopOutUs) {
+        requestUs = nowUs;
+    } else {
+        requestUs =
+            qMin(
+                requestUs,
+                m_project->durationUs());
+    }
+
+    m_compositor.requestComposite(
+        requestUs,
+        playbackRenderOptions());
 }
 
 void PlaybackEngine::onCompositeFinished()
@@ -625,18 +763,120 @@ void PlaybackEngine::onCompositeFinished()
     m_compositor.requestComposite(m_playheadUs, playbackRenderOptions());
 }
 
-void PlaybackEngine::onFrameReady(const GpuFrameTexture &frame)
+void PlaybackEngine::presentBufferedFrame()
+{
+    if (!m_bufferedFrame.isValid() || m_bufferedFrameTimeUs < 0)
+        return;
+
+    const drift::TimeUs nowUs =
+        m_playing
+            ? m_clock.currentTimeUs()
+            : m_playheadUs;
+
+    // QTimer and audio-device callbacks are not guaranteed to land exactly on
+    // the mathematical frame boundary. A small tolerance avoids delaying an
+    // otherwise due frame by a whole GUI refresh while still preventing future
+    // video from visibly leading audio.
+    const drift::TimeUs toleranceUs =
+        qMax<drift::TimeUs>(
+            1000,
+            frameStepUs() / 8);
+
+    if (m_playing
+        && m_bufferedFrameTimeUs > nowUs + toleranceUs) {
+        return;
+    }
+
+    {
+        QMutexLocker lock(&m_frameMutex);
+
+        m_currentFrame =
+            m_bufferedFrame;
+
+        m_currentFrameTimeUs =
+            m_bufferedFrameTimeUs;
+    }
+
+    m_bufferedFrame = {};
+    m_bufferedFrameTimeUs = -1;
+
+    emit currentFrameChanged();
+}
+
+void PlaybackEngine::onFrameReady(
+    const GpuFrameTexture &frame,
+    drift::TimeUs timeUs)
 {
     checkHardwareFallback();
 
     if (!frame.isValid())
         return;
 
-    {
-        QMutexLocker lock(&m_frameMutex);
-        m_currentFrame = frame;
+    // Paused/scrubbing/quality rendering has no realtime deadline and must show
+    // the requested frame immediately. The buffer exists only for fast
+    // realtime playback.
+    if (!m_playing || isQualityMode()) {
+        m_bufferedFrame = {};
+        m_bufferedFrameTimeUs = -1;
+
+        {
+            QMutexLocker lock(&m_frameMutex);
+
+            m_currentFrame = frame;
+            m_currentFrameTimeUs = timeUs;
+        }
+
+        emit currentFrameChanged();
+        return;
     }
-    emit currentFrameChanged();
+
+    const drift::TimeUs nowUs =
+        m_clock.currentTimeUs();
+
+    const drift::TimeUs frameUs =
+        qMax<drift::TimeUs>(
+            1,
+            frameStepUs());
+
+    // At rates above 1x, adjacent display samples cover more timeline.
+    const drift::TimeUs displayLeadUs =
+        static_cast<drift::TimeUs>(
+            static_cast<double>(frameUs)
+            * qMax(1.0, m_playbackRate));
+
+    // A seek can finish an older in-flight composite after the clock has already
+    // moved elsewhere. Never put that unrelated texture into the presentation
+    // buffer.
+    const drift::TimeUs allowedDistanceUs =
+        qMax<drift::TimeUs>(
+            frameUs * 3,
+            displayLeadUs * 3);
+
+    if (timeUs < nowUs - allowedDistanceUs
+        || timeUs > nowUs + allowedDistanceUs) {
+        return;
+    }
+
+    // Consume a due reserve before deciding what to do with the newly completed
+    // frame. Normally this empties the slot once per display cadence.
+    presentBufferedFrame();
+
+    if (!m_bufferedFrame.isValid()) {
+        m_bufferedFrame = frame;
+        m_bufferedFrameTimeUs = timeUs;
+    } else if (timeUs < m_bufferedFrameTimeUs) {
+        // There is room for exactly one future texture. Prefer the earliest
+        // frame still needed by the presenter; a newer completion can safely be
+        // discarded because the compositor continuously catches up to the audio
+        // clock.
+        m_bufferedFrame = frame;
+        m_bufferedFrameTimeUs = timeUs;
+    }
+
+    // If this frame is already due, publish it immediately. Otherwise it stays
+    // resident in the second presentation-ring slot until the audio clock
+    // reaches its timestamp.
+    presentBufferedFrame();
 }
 
 FrameCompositor::RenderOptions PlaybackEngine::playbackRenderOptions() const

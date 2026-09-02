@@ -237,7 +237,7 @@ Item {
                     visible: !Theme.touchUi
                     checked: EditorState.invertTimelineScroll
                     text: qsTr("Horizontal mouse-wheel pan")
-                    tooltip: qsTr("Scroll pans left and right along the timeline. Shift+scroll moves between tracks. Middle-click drag also pans.")
+                    tooltip: Theme.platformShortcutText(qsTr("Scroll pans left and right along the timeline. Shift+scroll moves between tracks. Middle-click drag also pans."))
                     onToggled: EditorState.invertTimelineScroll = checked
                 }
 

@@ -155,7 +155,7 @@ Item {
 
             ActionButton {
                 glyph: Theme.icons.audioLines
-                tooltip: qsTr("Separate audio from video")
+                tooltip: qsTr("Show audio on separate track")
                 enabled: EditorState.separateAudioAvailable
                 onClicked: EditorState.separateAudioFromSelection()
             }

@@ -800,14 +800,14 @@ Item {
                                                      EditorState.playheadSeconds)
             }
             ThemedMenuItem {
-                text: qsTr("Separate audio")
+                text: qsTr("Show audio on separate track")
                 icon.name: Theme.icons.audioLines
                 // CapCut: only offer extract when the clip still has embedded audio.
                 visible: clipItem.trackType === "video" && EditorState.separateAudioAvailable
                 onTriggered: EditorState.separateAudioFromSelection()
             }
             ThemedMenuItem {
-                text: qsTr("Separate all audio tracks")
+                text: qsTr("Show all audio tracks separately")
                 icon.name: Theme.icons.audioLines
                 visible: clipItem.trackType === "video" && EditorState.separateAudioAvailable
                          && EditorState.clipAudioStreamCount(clipItem.trackIndex, clipItem.clipIndex) > 1

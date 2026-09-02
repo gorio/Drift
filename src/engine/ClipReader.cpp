@@ -4,6 +4,7 @@
 #include "MediaProbe.h"
 
 #include <QTransform>
+#include <QElapsedTimer>
 #include <QtMath>
 #include <QByteArray>
 #include <QFile>
@@ -1051,9 +1052,25 @@ bool ClipReader::ensureHwScaler(const AVFrame *hwFrame, int targetWidth, int tar
 
     const QByteArray sizeArgs =
         QByteArray("w=") + QByteArray::number(targetWidth) + ":h=" + QByteArray::number(targetHeight);
-    const QByteArray args[2] = {sizeArgs + ":format=nv12", sizeArgs};
 
-    for (const QByteArray &scaleArgs : args) {
+    // scale_vt on current FFmpeg/macOS does not expose a "format" option.
+    // Trying "format=nv12" first caused an avfilter failure, graph teardown
+    // and graph rebuild every time the VideoToolbox scaler was created.
+    //
+    // VideoToolbox already negotiates the hardware surface format through
+    // hw_frames_ctx, so use only the supported size arguments on that backend.
+    const bool isVideoToolboxScaler =
+        QByteArray(scalerName) == QByteArrayLiteral("scale_vt");
+
+    const QByteArray args[2] = {
+        isVideoToolboxScaler ? sizeArgs : sizeArgs + ":format=nv12",
+        sizeArgs
+    };
+
+    const int argCount = isVideoToolboxScaler ? 1 : 2;
+
+    for (int argIndex = 0; argIndex < argCount; ++argIndex) {
+        const QByteArray &scaleArgs = args[argIndex];
         teardownHwScaler();
 
         m_vppGraph = avfilter_graph_alloc();
@@ -1254,18 +1271,120 @@ bool ClipReader::convertFramePreview(const AVFrame *frame, PreviewVideoFrame &ou
     if (!frame)
         return false;
 
+    static QElapsedTimer reportWindow;
+    static qint64 hwScaleTotalUs = 0;
+    static qint64 hwWrapTotalUs = 0;
+    static qint64 swConvertTotalUs = 0;
+    static qint64 hwScaleMaxUs = 0;
+    static qint64 hwWrapMaxUs = 0;
+    static qint64 swConvertMaxUs = 0;
+    static int hwFrames = 0;
+    static int swFrames = 0;
+
+    if (!reportWindow.isValid())
+        reportWindow.start();
+
     const bool hw = (m_hwAccelActive && frame->format == m_hwPixFmt)
         || isHardwarePixelFormat(static_cast<AVPixelFormat>(frame->format));
+
     if (hw) {
-        const AVFrame *scaled = scaleHwFrame(frame, targetWidth, targetHeight);
+        QElapsedTimer timer;
+        timer.start();
+
+        const AVFrame *scaled =
+            scaleHwFrame(frame, targetWidth, targetHeight);
+
+        const qint64 scaleUs = timer.nsecsElapsed() / 1000;
+
+        timer.restart();
+
         out = makePreviewFrame(scaled, m_sourceRotation);
+
+        const qint64 wrapUs = timer.nsecsElapsed() / 1000;
+
+        ++hwFrames;
+        hwScaleTotalUs += scaleUs;
+        hwWrapTotalUs += wrapUs;
+        hwScaleMaxUs = qMax(hwScaleMaxUs, scaleUs);
+        hwWrapMaxUs = qMax(hwWrapMaxUs, wrapUs);
+
         if (scaled == m_vppScaled)
             av_frame_unref(m_vppScaled);
-        return out.isValid();
+    } else {
+        QElapsedTimer timer;
+        timer.start();
+
+        AVFrame *nv12 =
+            softwareFrameToNv12(
+                frame,
+                m_swsNv12,
+                targetWidth,
+                targetHeight);
+
+        out = takePreviewFrame(nv12, m_sourceRotation);
+
+        const qint64 convertUs =
+            timer.nsecsElapsed() / 1000;
+
+        ++swFrames;
+        swConvertTotalUs += convertUs;
+        swConvertMaxUs =
+            qMax(swConvertMaxUs, convertUs);
     }
 
-    AVFrame *nv12 = softwareFrameToNv12(frame, m_swsNv12, targetWidth, targetHeight);
-    out = takePreviewFrame(nv12, m_sourceRotation);
+    if (reportWindow.elapsed() >= 1000) {
+        const double hwScaleAvgMs =
+            hwFrames > 0
+                ? hwScaleTotalUs / 1000.0 / hwFrames
+                : 0.0;
+
+        const double hwWrapAvgMs =
+            hwFrames > 0
+                ? hwWrapTotalUs / 1000.0 / hwFrames
+                : 0.0;
+
+        const double swAvgMs =
+            swFrames > 0
+                ? swConvertTotalUs / 1000.0 / swFrames
+                : 0.0;
+
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[CLIP-PERF] "
+                   "hwFrames=%1 "
+                   "swFrames=%2 "
+                   "hwScaleAvg=%3ms "
+                   "hwScaleMax=%4ms "
+                   "hwWrapAvg=%5ms "
+                   "hwWrapMax=%6ms "
+                   "swConvertAvg=%7ms "
+                   "swConvertMax=%8ms "
+                   "target=%9x%10")
+                   .arg(hwFrames)
+                   .arg(swFrames)
+                   .arg(hwScaleAvgMs, 0, 'f', 2)
+                   .arg(hwScaleMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(hwWrapAvgMs, 0, 'f', 2)
+                   .arg(hwWrapMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(swAvgMs, 0, 'f', 2)
+                   .arg(swConvertMaxUs / 1000.0, 0, 'f', 2)
+                   .arg(targetWidth)
+                   .arg(targetHeight);
+
+        hwScaleTotalUs = 0;
+        hwWrapTotalUs = 0;
+        swConvertTotalUs = 0;
+
+        hwScaleMaxUs = 0;
+        hwWrapMaxUs = 0;
+        swConvertMaxUs = 0;
+
+        hwFrames = 0;
+        swFrames = 0;
+
+        reportWindow.restart();
+    }
+
     return out.isValid();
 }
 
@@ -1297,6 +1416,9 @@ bool ClipReader::ensureAudioDecoder()
 
 bool ClipReader::seekVideoStream(drift::TimeUs sourceUs)
 {
+    QElapsedTimer seekTimer;
+    seekTimer.start();
+
     if (!ensureVideoDecoder())
         return false;
 
@@ -1312,6 +1434,20 @@ bool ClipReader::seekVideoStream(drift::TimeUs sourceUs)
     }
     avcodec_flush_buffers(m_videoCtx);
     m_videoPositioned = true;
+
+    const qint64 seekUs =
+        seekTimer.nsecsElapsed() / 1000;
+
+    if (seekUs >= 5000) {
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[VIDEO-SEEK] "
+                   "target=%1ms "
+                   "elapsed=%2ms")
+                   .arg(sourceUs / 1000.0, 0, 'f', 1)
+                   .arg(seekUs / 1000.0, 0, 'f', 2);
+    }
+
     return true;
 }
 
@@ -1622,17 +1758,42 @@ bool ClipReader::decodePreviewVideoFrameAtOnce(drift::TimeUs sourceUs, PreviewVi
 
     applyDecodeSize(decodeSizeFor(maxWidth, maxHeight));
 
+    QElapsedTimer readTimer;
+    readTimer.start();
+
     while (m_hasPeek && sourceUs >= m_peekPtsUs)
         promotePeekToCover();
-    if (coverHolds(sourceUs) && lookupCachedPreview(m_coverPtsUs, out))
-        return true;
-    if (lookupCachedPreview(sourceUs, out))
-        return true;
 
-    if (!advanceVideoTo(sourceUs, maxWidth, maxHeight, hwFailure))
+    if (coverHolds(sourceUs)
+        && lookupCachedPreview(m_coverPtsUs, out)) {
+        return true;
+    }
+
+    if (lookupCachedPreview(sourceUs, out)) {
+        return true;
+    }
+
+    QElapsedTimer advanceTimer;
+    advanceTimer.start();
+
+    const bool advanced =
+        advanceVideoTo(
+            sourceUs,
+            maxWidth,
+            maxHeight,
+            hwFailure);
+
+    const qint64 advanceUs =
+        advanceTimer.nsecsElapsed() / 1000;
+
+    if (!advanced)
         return false;
+
     if (!m_coverFrame)
         return false;
+
+    QElapsedTimer convertTimer;
+    convertTimer.start();
 
     PreviewVideoFrame converted;
     if (!convertFramePreview(m_coverFrame, converted, m_decodeW, m_decodeH)) {
@@ -1645,8 +1806,38 @@ bool ClipReader::decodePreviewVideoFrameAtOnce(drift::TimeUs sourceUs, PreviewVi
         }
         return false;
     }
+    const qint64 convertUs =
+        convertTimer.nsecsElapsed() / 1000;
+
     out = converted;
     storeCachedPreview(m_coverPtsUs, converted);
+
+    const qint64 totalUs =
+        readTimer.nsecsElapsed() / 1000;
+
+    if (totalUs >= 15000) {
+        qWarning().noquote()
+            << QStringLiteral(
+                   "[READER-SLOW] "
+                   "request=%1ms "
+                   "cover=%2ms "
+                   "peek=%3ms "
+                   "last=%4ms "
+                   "advance=%5ms "
+                   "convert=%6ms "
+                   "total=%7ms "
+                   "decodeSize=%8x%9")
+                   .arg(sourceUs / 1000.0, 0, 'f', 1)
+                   .arg(m_coverPtsUs / 1000.0, 0, 'f', 1)
+                   .arg(m_peekPtsUs / 1000.0, 0, 'f', 1)
+                   .arg(m_lastVideoPtsUs / 1000.0, 0, 'f', 1)
+                   .arg(advanceUs / 1000.0, 0, 'f', 2)
+                   .arg(convertUs / 1000.0, 0, 'f', 2)
+                   .arg(totalUs / 1000.0, 0, 'f', 2)
+                   .arg(m_decodeW)
+                   .arg(m_decodeH);
+    }
+
     return true;
 }
 
@@ -1682,6 +1873,15 @@ bool ClipReader::prefetchNextPreviewVideoFrame(int maxWidth, int maxHeight, drif
 {
     m_readAheadUs = qMax<drift::TimeUs>(0, readAheadUs);
     trimPreviewCache();
+
+    // A zero read-ahead budget means prefetch is explicitly disabled.
+    //
+    // Previously readAheadUs == 0 still decoded one frame because the
+    // read-ahead boundary check below was guarded by "m_readAheadUs > 0".
+    // That advanced the realtime ClipReader cursor even when preview
+    // prefetch had supposedly been disabled.
+    if (m_readAheadUs <= 0)
+        return false;
 
     if (!m_videoPositioned || m_sourceFrameDurationUs <= 0)
         return false;

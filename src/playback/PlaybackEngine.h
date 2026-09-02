@@ -108,7 +108,8 @@ private:
     void onPlayheadTick();
     void onCompositeTick();
     void onCompositeFinished();
-    void onFrameReady(const GpuFrameTexture &frame);
+    void onFrameReady(const GpuFrameTexture &frame, drift::TimeUs timeUs);
+    void presentBufferedFrame();
     void checkEndOfTimeline(drift::TimeUs timeUs);
     void checkHardwareFallback();
     bool isQualityMode() const { return m_playbackMode == QStringLiteral("quality"); }
@@ -125,6 +126,22 @@ private:
     QTimer m_playheadTimer;
     QTimer m_compositeTimer;
     GpuFrameTexture m_currentFrame;
+
+    // Hitch Shield:
+    //
+    // GlRuntime has a three-target presentation ring. Keep at most ONE future
+    // texture outside m_currentFrame:
+    //
+    //   slot A = displayed frame
+    //   slot B = buffered next frame
+    //   slot C = compositor rendering
+    //
+    // Holding more than one future frame with a 3-slot ring could allow a
+    // texture still referenced by the presenter to be recycled.
+    GpuFrameTexture m_bufferedFrame;
+    drift::TimeUs m_bufferedFrameTimeUs = -1;
+    drift::TimeUs m_currentFrameTimeUs = -1;
+
     mutable QMutex m_frameMutex;
     drift::TimeUs m_playheadUs = 0;
     std::atomic<bool> m_playing = false;

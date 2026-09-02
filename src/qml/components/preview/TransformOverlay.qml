@@ -494,7 +494,7 @@ Item {
                     // flush against a canvas edge or dead-centre by feel.
                     // Ctrl passes straight through (Alt is the window drag on
                     // most Linux desktops, so it is not usable here).
-                    if (handle.canSnap && !(bodyDrag.centroid.modifiers & Qt.ControlModifier)) {
+                    if (handle.canSnap && !Theme.primaryModifierPressed(bodyDrag.centroid.modifiers)) {
                         const w = handle.layoutW
                         const h = handle.layoutH
                         const snapX = root.snapAxis([xPx, xPx + w / 2, xPx + w],
@@ -610,7 +610,7 @@ Item {
                         // Only the moving edge sticks; the anchor is already fixed.
                         let guideX = -1
                         let guideY = -1
-                        if (handle.canSnap && !(modifiers & Qt.ControlModifier)) {
+                        if (handle.canSnap && !Theme.primaryModifierPressed(modifiers)) {
                             const anchorX = dxSign < 0 ? handle.dragStartX + handle.dragStartW
                                                        : handle.dragStartX
                             const anchorY = dySign < 0 ? handle.dragStartY + handle.dragStartH
@@ -836,7 +836,7 @@ Item {
                             return
                         let deg = root.normalizeDeg(rotateDrag.pointerAngle()
                                                     + handle.rotateGrabOffset)
-                        if (!(rotateDrag.centroid.modifiers & Qt.ControlModifier))
+                        if (!Theme.primaryModifierPressed(rotateDrag.centroid.modifiers))
                             deg = root.snapAngle(deg)
                         handle.liveRotation = deg
                         EditorState.previewSetClipRotation(

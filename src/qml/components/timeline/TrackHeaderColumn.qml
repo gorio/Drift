@@ -553,7 +553,7 @@ Item {
                 z: 40
                 onWheel: (wheel) => {
                     // Modified wheel belongs to the timeline's zoom/pan.
-                    if (wheel.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) {
+                    if (Theme.primaryModifierPressed(wheel.modifiers) || (wheel.modifiers & Qt.ShiftModifier)) {
                         wheel.accepted = false
                         return
                     }

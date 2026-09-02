@@ -2899,7 +2899,7 @@ QVariantList AppController::actions() const
         action(QStringLiteral("pasteEffects"), tr("Paste effects onto clip")),
         action(QStringLiteral("split"), tr("Split at current time")),
         action(QStringLiteral("merge"), tr("Merge adjacent clips")),
-        action(QStringLiteral("separateAudio"), tr("Separate audio")),
+        action(QStringLiteral("separateAudio"), tr("Show audio on separate track")),
         action(QStringLiteral("unlink"), tr("Unlink audio")),
         action(QStringLiteral("clearSelection"), tr("Clear selection")),
         action(QStringLiteral("selectAll"), tr("Select all clips")),

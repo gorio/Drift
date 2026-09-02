@@ -456,8 +456,8 @@
         <translation>Congelar fotograma en la posición actual</translation>
     </message>
     <message>
-        <source>Separate audio from video</source>
-        <translation>Separar audio del vídeo</translation>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Delete</source>
@@ -1353,10 +1353,6 @@
         <translation>Combinar clips adyacentes</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Separar audio</translation>
-    </message>
-    <message>
         <source>Unlink audio</source>
         <translation>Desvincular audio</translation>
     </message>
@@ -1960,6 +1956,10 @@
     <message>
         <source>Media edited</source>
         <translation>Medio editado</translation>
+    </message>
+    <message>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Building keyframes…</source>
@@ -7957,11 +7957,11 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Dividir en la posición actual</translation>
     </message>
     <message>
-        <source>Separate audio</source>
-        <translation>Separar audio</translation>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Separate all audio tracks</source>
+        <source>Show all audio tracks separately</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -8127,6 +8127,10 @@ Si la reproducción se corta, prueba con otra opción.</translation>
         <translation>Modo de corte — haz clic en un clip para dividirlo</translation>
     </message>
     <message>
+        <source>Show audio on separate track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Trim start — click a clip to drop everything left of the cut</source>
         <translation>Recortar inicio — haz clic en un clip para descartar todo a la izquierda del corte</translation>
     </message>
@@ -8177,10 +8181,6 @@ Si la reproducción se corta, prueba con otra opción.</translation>
     <message>
         <source>Clear work area</source>
         <translation>Borrar área de trabajo</translation>
-    </message>
-    <message>
-        <source>Separate audio from video</source>
-        <translation>Separar audio del vídeo</translation>
     </message>
     <message>
         <source>Unlink video and audio</source>
